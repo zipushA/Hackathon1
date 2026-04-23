@@ -200,6 +200,7 @@
 #         "should_continue_listening": True,
 #         "ignored": False,
 #     }
+
 from fastapi import FastAPI, HTTPException, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict, Any
@@ -273,14 +274,22 @@ def start_chat(script_key: str = Form(...)):
 
     session_id = str(uuid4())
 
+    # sessions[session_id] = {
+    #     "script_key": script_key,
+    #     "conversation": conversation,
+    #     "last_transcript": "",
+    #     "last_reply": opening,
+    #     "mode": "auto",
+    # }
     sessions[session_id] = {
         "script_key": script_key,
         "conversation": conversation,
         "last_transcript": "",
         "last_reply": opening,
         "mode": "auto",
+        "is_finished": False,
+        "feedback": None,
     }
-
     opening_audio_base64 = generate_client_audio(opening)
 
     return {
@@ -313,7 +322,11 @@ def send_message(
         }
 
     conversation_service = ConversationService(SCRIPTS[script_key])
-    updated_conversation, reply = conversation_service.send_user_message(
+    # updated_conversation, reply = conversation_service.send_user_message(
+    #     conversation,
+    #     trimmed_message
+    # )
+    updated_conversation, reply, is_finished, feedback = conversation_service.send_user_message(
         conversation,
         trimmed_message
     )
@@ -321,16 +334,28 @@ def send_message(
     sessions[session_id]["conversation"] = updated_conversation
     sessions[session_id]["last_transcript"] = trimmed_message
     sessions[session_id]["last_reply"] = reply
+    sessions[session_id]["is_finished"] = is_finished
+    sessions[session_id]["feedback"] = feedback
 
-    audio_base64 = generate_client_audio(reply)
+    # audio_base64 = generate_client_audio(reply)
+    audio_base64 = ""
+    if reply and not is_finished:
+        audio_base64 = generate_client_audio(reply)
 
+    # return {
+    #     "reply": reply,
+    #     "audio_base64": audio_base64,
+    #     "conversation": updated_conversation,
+    #     "ignored": False,
+    # }
     return {
         "reply": reply,
         "audio_base64": audio_base64,
         "conversation": updated_conversation,
         "ignored": False,
+        "is_finished": is_finished,
+        "feedback": feedback,
     }
-
 
 @app.post("/chat/transcribe")
 def transcribe_audio(audio_file: UploadFile = File(...)):
@@ -350,6 +375,18 @@ def send_audio_message(
     script_key = session["script_key"]
     conversation = session["conversation"]
 
+    if session.get("is_finished"):
+        return {
+            "transcribed_text": "",
+            "reply": "",
+            "audio_base64": "",
+            "conversation": conversation,
+            "should_continue_listening": False,
+            "ignored": True,
+            "is_finished": True,
+            "feedback": session.get("feedback"),
+        }
+
     user_text = transcription_service.transcribe_audio(audio_file).strip()
 
     if not user_text:
@@ -363,22 +400,44 @@ def send_audio_message(
         }
 
     conversation_service = ConversationService(SCRIPTS[script_key])
-    updated_conversation, reply = conversation_service.send_user_message(
-        conversation,
-        user_text
-    )
+    # updated_conversation, reply = conversation_service.send_user_message(
+    #     conversation,
+    #     user_text
+    # )
+    updated_conversation, reply, is_finished, feedback = conversation_service.send_user_message(
+    conversation,
+    user_text
+)
 
     sessions[session_id]["conversation"] = updated_conversation
     sessions[session_id]["last_transcript"] = user_text
     sessions[session_id]["last_reply"] = reply
+    sessions[session_id]["is_finished"] = is_finished
+    sessions[session_id]["feedback"] = feedback
 
-    audio_base64 = generate_client_audio(reply)
+    # audio_base64 = generate_client_audio(reply)
+    audio_base64 = ""
+    if reply and not is_finished:
+        audio_base64 = generate_client_audio(reply)
 
+    # return {
+    #     "transcribed_text": user_text,
+    #     "reply": reply,
+    #     "audio_base64": audio_base64,
+    #     "conversation": updated_conversation,
+    #     "should_continue_listening": True,
+    #     "ignored": False,
+    # }
+    print("assistant finished:", is_finished)
+    print("assistant reply:", reply)
+    print("assistant feedback:", feedback)
     return {
-        "transcribed_text": user_text,
-        "reply": reply,
-        "audio_base64": audio_base64,
-        "conversation": updated_conversation,
-        "should_continue_listening": True,
-        "ignored": False,
-    }
+    "transcribed_text": user_text,
+    "reply": reply,
+    "audio_base64": audio_base64,
+    "conversation": updated_conversation,
+    "should_continue_listening": not is_finished,
+    "ignored": False,
+    "is_finished": is_finished,
+    "feedback": feedback,
+}

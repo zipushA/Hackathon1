@@ -1003,6 +1003,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   MessageCircle,
   Mic,
   MicOff,
@@ -1037,7 +1043,13 @@ export default function ChatPage() {
   const [isRecording, setIsRecording] = useState(false);
   const [recordingSeconds, setRecordingSeconds] = useState(0);
   const [autoConversation] = useState(true);
-
+  //פידבק יפה
+  const [showFeedback, setShowFeedback] = useState(false);
+  //
+  //
+  const [isFinished, setIsFinished] = useState(false);
+  const [finalFeedback, setFinalFeedback] = useState<any | null>(null);
+  //
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -1110,7 +1122,7 @@ export default function ChatPage() {
     }
 
     if (audioContextRef.current) {
-      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current.close().catch(() => { });
       audioContextRef.current = null;
     }
 
@@ -1175,8 +1187,8 @@ export default function ChatPage() {
     sourceRef.current = source;
 
     const dataArray = new Uint8Array(analyser.fftSize);
-    const silenceThreshold = 10;
-    const silenceDuration = 1200;
+    const silenceThreshold = 8;
+    const silenceDuration = 2500;
 
     const checkSilence = () => {
       if (!analyserRef.current || !isRecordingRef.current) {
@@ -1229,7 +1241,10 @@ export default function ChatPage() {
     audio.onended = async () => {
       isAssistantSpeakingRef.current = false;
 
-      if (autoConversation) {
+      // if (autoConversation) {
+      //   await startRecording(nextSessionId);
+      // }
+      if (autoConversation && !isFinished) {
         await startRecording(nextSessionId);
       }
     };
@@ -1242,12 +1257,19 @@ export default function ChatPage() {
   }
 
   async function handleStartChat() {
+    //פידבק יפה
+    setShowFeedback(false);
+    //
     if (!selectedScript) {
       alert("בחרי תסריט");
       return;
     }
 
     try {
+      //
+      setIsFinished(false);
+      setFinalFeedback(null);
+      //
       setLoading(true);
       setPendingTranscript("");
       setConversation([]);
@@ -1330,7 +1352,9 @@ export default function ChatPage() {
 
   async function startRecording(customSessionId?: string) {
     const activeSessionId = customSessionId || sessionId;
-
+    if (isFinished) {
+      return;
+    }
     if (!activeSessionId) {
       return;
     }
@@ -1368,8 +1392,8 @@ export default function ChatPage() {
         const extension = blobType.includes("mp4")
           ? "mp4"
           : blobType.includes("ogg")
-          ? "ogg"
-          : "webm";
+            ? "ogg"
+            : "webm";
 
         const audioFile = new File([audioBlob], `recording.${extension}`, {
           type: blobType,
@@ -1437,9 +1461,40 @@ export default function ChatPage() {
       }
 
       const data = await res.json();
+      //
+      setConversation(data.conversation || []);
 
+      if (data.is_finished) {
+
+        setIsFinished(true);
+        setFinalFeedback(data.feedback || null);
+        //פידבק יפה
+        setShowFeedback(false);
+        //
+
+        cleanupAudioDetection();
+        stopTracks();
+
+        isAssistantSpeakingRef.current = false;
+        isRecordingRef.current = false;
+        setIsRecording(false);
+
+        if (timerRef.current) {
+          window.clearInterval(timerRef.current);
+          timerRef.current = null;
+        }
+
+        return;
+      }
+      //
+      // if (data.ignored) {
+      //   if (autoConversation) {
+      //     await startRecording(activeSessionId);
+      //   }
+      //   return;
+      // }
       if (data.ignored) {
-        if (autoConversation) {
+        if (autoConversation && !isFinished) {
           await startRecording(activeSessionId);
         }
         return;
@@ -1448,9 +1503,14 @@ export default function ChatPage() {
       setPendingTranscript(data.transcribed_text || "");
       setConversation(data.conversation || []);
 
+      // if (data.audio_base64) {
+      //   await playAssistantAudio(data.audio_base64, activeSessionId);
+      // } else if (autoConversation) {
+      //   await startRecording(activeSessionId);
+      // }
       if (data.audio_base64) {
         await playAssistantAudio(data.audio_base64, activeSessionId);
-      } else if (autoConversation) {
+      } else if (autoConversation && !isFinished) {
         await startRecording(activeSessionId);
       }
     } catch (error) {
@@ -1465,6 +1525,9 @@ export default function ChatPage() {
   }
 
   function resetChat() {
+    //פידבק יפה
+    setShowFeedback(false);
+    //
     if (isRecordingRef.current) {
       stopRecording();
     }
@@ -1480,7 +1543,10 @@ export default function ChatPage() {
       window.clearInterval(timerRef.current);
       timerRef.current = null;
     }
-
+    //
+    setIsFinished(false);
+    setFinalFeedback(null);
+    //
     setSessionId("");
     setConversation([]);
     setMessage("");
@@ -1628,18 +1694,16 @@ export default function ChatPage() {
                             className={`flex ${isAgent ? "justify-start" : "justify-end"}`}
                           >
                             <div
-                              className={`max-w-[80%] rounded-2xl px-4 py-3 shadow-sm ${
-                                isAgent
-                                  ? "border border-emerald-200 bg-emerald-50 text-slate-900"
-                                  : "bg-emerald-600 text-white"
-                              }`}
+                              className={`max-w-[80%] rounded-2xl px-4 py-3 shadow-sm ${isAgent
+                                ? "border border-emerald-200 bg-emerald-50 text-slate-900"
+                                : "bg-emerald-600 text-white"
+                                }`}
                             >
                               <div
-                                className={`mb-1 text-xs font-semibold ${
-                                  isAgent
-                                    ? "text-emerald-700"
-                                    : "text-emerald-100"
-                                }`}
+                                className={`mb-1 text-xs font-semibold ${isAgent
+                                  ? "text-emerald-700"
+                                  : "text-emerald-100"
+                                  }`}
                               >
                                 {isAgent ? "נציג" : "לקוח"}
                               </div>
@@ -1686,7 +1750,18 @@ export default function ChatPage() {
                   )}
                 </div>
               </ScrollArea>
-
+              //פידבק יפה
+              {isFinished && finalFeedback && (
+                <Button
+                  variant="outline"
+                  onClick={() => setShowFeedback(true)}
+                  className="gap-2 border-emerald-200 text-emerald-700"
+                  size="sm"
+                >
+                  צפייה במשוב
+                </Button>
+              )}
+              //
               <div className="shrink-0 border-t border-slate-200 bg-white p-3">
                 <div className="space-y-3">
                   <Textarea
@@ -1812,6 +1887,67 @@ export default function ChatPage() {
           </div>
         </div>
       </div>
+      <Dialog open={showFeedback} onOpenChange={setShowFeedback}>
+  <DialogContent className="max-w-2xl" dir="rtl">
+    <DialogHeader>
+      <DialogTitle className="text-right text-xl font-bold">
+        משוב מסכם לשיחה
+      </DialogTitle>
+    </DialogHeader>
+
+    {finalFeedback && (
+      <div className="space-y-4">
+        <div className="grid gap-4 sm:grid-cols-2">
+          {"AGENT" in finalFeedback && (
+            <Card className="border-slate-200">
+              <CardContent className="p-4 text-center">
+                <div className="text-sm text-slate-500">ציון נציג</div>
+                <div className="mt-2 text-3xl font-bold text-emerald-600">
+                  {finalFeedback.AGENT}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+
+          {"LISTEN" in finalFeedback && (
+            <Card className="border-slate-200">
+              <CardContent className="p-4 text-center">
+                <div className="text-sm text-slate-500">ציון הקשבה</div>
+                <div className="mt-2 text-3xl font-bold text-emerald-600">
+                  {finalFeedback.LISTEN}
+                </div>
+              </CardContent>
+            </Card>
+          )}
+        </div>
+
+        {"feedback" in finalFeedback && (
+          <Card className="border-slate-200">
+            <CardContent className="p-4">
+              <div className="mb-2 text-sm font-semibold text-slate-700">
+                משוב מילולי
+              </div>
+              <div className="whitespace-pre-wrap text-sm leading-7 text-slate-600">
+                {finalFeedback.feedback}
+              </div>
+            </CardContent>
+          </Card>
+        )}
+
+        <Card className="border-slate-200">
+          <CardContent className="p-4">
+            <div className="mb-2 text-sm font-semibold text-slate-700">
+              נתוני המשוב
+            </div>
+            <pre className="overflow-auto rounded-xl bg-slate-50 p-3 text-xs text-slate-600">
+              {JSON.stringify(finalFeedback, null, 2)}
+            </pre>
+          </CardContent>
+        </Card>
+      </div>
+    )}
+  </DialogContent>
+</Dialog>
     </div>
   );
 }

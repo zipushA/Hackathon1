@@ -1,8 +1,65 @@
 from pathlib import Path
 import os
 from openai import OpenAI
+import json
 
 MODEL = "gpt-5.4"
+
+# def try_parse_feedback(text: str):
+#     text = (text or "").strip()
+
+#     if not text:
+#         return False, None
+
+#     if not text.startswith("{"):
+#         return False, None
+
+#     try:
+#         parsed = json.loads(text)
+#     except Exception:
+#         return False, None
+
+#     if isinstance(parsed, dict) and (
+#         "AGENT" in parsed or
+#         "LISTEN" in parsed or
+#         "feedback" in parsed or
+#         "score" in parsed
+#     ):
+#         return True, parsed
+
+#     return False, None
+def try_parse_feedback(text: str):
+    text = (text or "").strip()
+
+    if not text:
+        return False, None
+
+    # מנקה בלוקי קוד כמו ```json ... ```
+    if text.startswith("```"):
+        text = text.replace("```json", "").replace("```", "").strip()
+
+    start = text.find("{")
+    end = text.rfind("}")
+
+    if start == -1 or end == -1 or end <= start:
+        return False, None
+
+    possible_json = text[start:end + 1]
+
+    try:
+        parsed = json.loads(possible_json)
+    except Exception:
+        return False, None
+
+    if isinstance(parsed, dict) and (
+        "AGENT" in parsed or
+        "LISTEN" in parsed or
+        "feedback" in parsed or
+        "score" in parsed
+    ):
+        return True, parsed
+
+    return False, None
 
 class ConversationService:
     def __init__(self, prompt_path: str = "prompt.txt"):
@@ -39,7 +96,28 @@ class ConversationService:
 
         return conversation, assistant_text
 
-    def send_user_message(self, conversation: list[dict], user_text: str) -> tuple[list[dict], str]:
+    # def send_user_message(self, conversation: list[dict], user_text: str) -> tuple[list[dict], str]:
+    #     conversation.append({
+    #         "role": "user",
+    #         "content": user_text
+    #     })
+
+    #     response = self.client.responses.create(
+    #         model=MODEL,
+    #         instructions=self.system_prompt,
+    #         input=conversation,
+    #     )
+
+    #     assistant_text = response.output_text.strip()
+
+    #     conversation.append({
+    #         "role": "assistant",
+    #         "content": assistant_text
+    #     })
+
+    #     return conversation, assistant_text
+
+    def send_user_message(self, conversation: list[dict], user_text: str) -> tuple[list[dict], str, bool, dict | None]:
         conversation.append({
             "role": "user",
             "content": user_text
@@ -53,9 +131,14 @@ class ConversationService:
 
         assistant_text = response.output_text.strip()
 
+        is_feedback, feedback_data = try_parse_feedback(assistant_text)
+
+        if is_feedback:
+            return conversation, "", True, feedback_data
+
         conversation.append({
             "role": "assistant",
             "content": assistant_text
         })
 
-        return conversation, assistant_text
+        return conversation, assistant_text, False, None
